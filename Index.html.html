@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#145c43">
+  <title>Smart Basket</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root { --green:#145c43; --pale:#eaf4ef; --ink:#17231d; --muted:#65736b; --line:#e2e9e4; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#f3f6f4; color:var(--ink); font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+    header { background:var(--green); color:white; padding:20px 17px 24px; }
+    header .sub { opacity:.85; font-size:13px; margin-top:4px; }
+    main { max-width:650px; margin:0 auto; padding:14px; }
+    .card { background:white; border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:13px; box-shadow:0 3px 12px #193b2710; }
+    h1 { margin:0; font-size:24px; } h2 { font-size:17px; margin:0 0 12px; }
+    p { color:var(--muted); font-size:14px; line-height:1.45; }
+    #reader { width:100%; overflow:hidden; border-radius:12px; background:#101814; }
+    #reader video { border-radius:12px; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    button { border:0; border-radius:10px; padding:12px 15px; font-weight:650; font-size:14px; cursor:pointer; background:var(--green); color:white; }
+    button.secondary { background:var(--pale); color:var(--green); }
+    button.danger { background:#fff0ee; color:#a33225; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .status { font-size:13px; color:var(--muted); margin-top:9px; min-height:18px; }
+    .total { display:flex; justify-content:space-between; align-items:center; background:var(--pale); padding:14px; border-radius:12px; margin-top:12px; }
+    .total strong { font-size:25px; color:var(--green); }
+    .item { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); }
+    .item:last-child { border-bottom:0; }
+    .item small { display:block; color:var(--muted); margin-top:3px; }
+    .qty { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+    .qty button { padding:7px 10px; min-width:32px; }
+    .empty { text-align:center; padding:18px 8px; color:var(--muted); font-size:14px; }
+    .manual { display:flex; gap:8px; margin-top:10px; }
+    input { min-width:0; flex:1; padding:11px; border:1px solid #cbd8d0; border-radius:9px; font-size:15px; }
+    .receipt { white-space:pre-wrap; background:#f7faf8; border:1px dashed #bdcbc2; border-radius:10px; padding:12px; font:13px/1.55 ui-monospace,monospace; }
+    footer { text-align:center; color:var(--muted); font-size:12px; padding:5px 16px 24px; }
+    @media print { header,.scanner-card,.actions,.manual,footer,.no-print { display:none!important; } body { background:white; } main { padding:0; } .card { box-shadow:none; border:0; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🛒 Smart Basket</h1>
+  <div class="sub">Scan products · Add to basket · Calculate your bill</div>
+</header>
+<main>
+  <section class="card scanner-card">
+    <h2>1. Scan a product barcode</h2>
+    <div id="reader"></div>
+    <div class="actions">
+      <button id="startBtn" onclick="startScanner()">Start camera scanner</button>
+      <button class="secondary" id="stopBtn" onclick="stopScanner()" disabled>Stop scanner</button>
+    </div>
+    <div class="status" id="scanStatus" role="status">Tap “Start camera scanner” and allow camera access.</div>
+    <p>For this exhibition demo, scan the sample barcodes printed with the project. The sample codes are listed below.</p>
+    <div class="manual">
+      <input id="codeInput" inputmode="numeric" placeholder="Or enter a barcode number">
+      <button onclick="addManualCode()">Add</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Your shopping basket</h2>
+    <div id="cart"><div class="empty">No products scanned yet.</div></div>
+    <div class="total"><span><b>Total bill</b></span><strong id="grandTotal">₹0.00</strong></div>
+    <div class="actions no-print">
+      <button class="secondary" onclick="showReceipt()">View receipt</button>
+      <button class="secondary" onclick="window.print()">Print receipt</button>
+      <button class="danger" onclick="clearCart()">Clear basket</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Sample product barcode list</h2>
+    <p>Print barcodes containing these exact numbers and attach one to each demo product.</p>
+    <div id="sampleList"></div>
+  </section>
+
+  <section class="card" id="receiptCard" hidden>
+    <h2>Digital receipt</h2>
+    <div class="receipt" id="receiptText"></div>
+  </section>
+</main>
+<footer>Smart Basket · Commerce Exhibition Prototype<br>Demo prices only — not connected to a real shop or payment system.</footer>
+
+<script>
+const products = {
+  "8901234560012": { name: "Soap", price: 40.00 },
+  "8901234560013": { name: "Shampoo", price: 120.00 },
+  "8901234560014": { name: "Biscuit", price: 30.00 },
+  "8901234560015": { name: "Toothpaste", price: 60.00 },
+  "8901234560016": { name: "Juice", price: 25.00 }
+};
+let cart = {};
+let scanner = null;
+let isStarting = false;
+let lastCode = "";
+let lastScanAt = 0;
+
+const money = n => "₹" + n.toFixed(2);
+function setStatus(message) {
+  document.getElementById("scanStatus").textContent = message;
+}
+function addProduct(code) {
+  code = String(code).trim();
+  const now = Date.now();
+  if (code === lastCode && now - lastScanAt < 1800) return;
+  lastCode = code; lastScanAt = now;
+
+  const product = products[code];
+  if (!product) {
+    setStatus("Barcode " + code + " is not in this demo product list.");
+    return;
+  }
+  cart[code] = (cart[code] || 0) + 1;
+  renderCart();
+  setStatus(product.name + " added to your basket.");
+}
+function addManualCode() {
+  const input = document.getElementById("codeInput");
+  if (!input.value.trim()) return;
+  addProduct(input.value);
+  input.value = "";
+}
+function changeQty(code, change) {
+  cart[code] = (cart[code] || 0) + change;
+  if (cart[code] <= 0) delete cart[code];
+  renderCart();
+}
+function renderCart() {
+  const container = document.getElementById("cart");
+  const codes = Object.keys(cart);
+  let total = 0;
+  if (!codes.length) {
+    container.innerHTML = '<div class="empty">No products scanned yet.</div>';
+  } else {
+    container.replaceChildren();
+    codes.forEach(code => {
+      const p = products[code], qty = cart[code], lineTotal = p.price * qty;
+      total += lineTotal;
+      const row = document.createElement("div");
+      row.className = "item";
+      const info = document.createElement("div");
+      const name = document.createElement("b");
+      name.textContent = p.name;
+      const detail = document.createElement("small");
+      detail.textContent = money(p.price) + " each · " + money(lineTotal);
+      info.append(name, detail);
+      const controls = document.createElement("div");
+      controls.className = "qty";
+      const minus = document.createElement("button");
+      minus.className = "secondary"; minus.textContent = "−";
+      minus.setAttribute("aria-label", "Remove one " + p.name);
+      minus.onclick = () => changeQty(code, -1);
+      const count = document.createElement("b"); count.textContent = qty;
+      const plus = document.createElement("button");
+      plus.className = "secondary"; plus.textContent = "+";
+      plus.setAttribute("aria-label", "Add one " + p.name);
+      plus.onclick = () => changeQty(code, 1);
+      controls.append(minus, count, plus);
+      row.append(info, controls);
+      container.append(row);
+    });
+  }
+  document.getElementById("grandTotal").textContent = money(total);
+}
+async function startScanner() {
+  if (isStarting || (scanner && scanner.isScanning)) return;
+  if (!window.Html5Qrcode) {
+    setStatus("Scanner library did not load. Check your internet connection and reload.");
+    return;
+  }
+  isStarting = true;
+  document.getElementById("startBtn").disabled = true;
+  try {
+    if (!scanner) scanner = new Html5Qrcode("reader");
+    await scanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        qrbox: { width: 260, height: 130 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.QR_CODE
+        ]
+      },
+      decodedText => addProduct(decodedText),
+      () => {}
+    );
+    setStatus("Camera is on. Point it at a product barcode.");
+    document.getElementById("stopBtn").disabled = false;
+  } catch (error) {
+    setStatus("Could not start camera. Open this page over HTTPS and allow camera permission.");
+    document.getElementById("startBtn").disabled = false;
+  } finally {
+    isStarting = false;
+  }
+}
+async function stopScanner() {
+  if (scanner && scanner.isScanning) {
+    try { await scanner.stop(); } catch (e) {}
+  }
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+  setStatus("Scanner stopped.");
+}
+function clearCart() {
+  if (!Object.keys(cart).length) return;
+  if (confirm("Clear all products from this basket?")) {
+    cart = {};
+    renderCart();
+    document.getElementById("receiptCard").hidden = true;
+    setStatus("Basket cleared.");
+  }
+}
+function showReceipt() {
+  const codes = Object.keys(cart);
+  if (!codes.length) {
+    setStatus("Scan at least one product before viewing a receipt.");
+    return;
+  }
+  let total = 0;
+  const lines = ["       SMART BASKET", "     DEMO RECEIPT", "--------------------------"];
+  codes.forEach(code => {
+    const p = products[code], qty = cart[code], amount = p.price * qty;
+    total += amount;
+    lines.push(p.name + " x " + qty);
+    lines.push("  " + money(p.price) + " each       " + money(amount));
+  });
+  lines.push("--------------------------");
+  lines.push("TOTAL              " + money(total));
+  lines.push("Thank you!");
+  document.getElementById("receiptText").textContent = lines.join("\n");
+  document.getElementById("receiptCard").hidden = false;
+  document.getElementById("receiptCard").scrollIntoView({behavior:"smooth"});
+}
+function renderSamples() {
+  const list = document.getElementById("sampleList");
+  Object.entries(products).forEach(([code, p]) => {
+    const row = document.createElement("div");
+    row.className = "item";
+    const left = document.createElement("div");
+    const name = document.createElement("b"); name.textContent = p.name;
+    const barcode = document.createElement("small"); barcode.textContent = code;
+    left.append(name, barcode);
+    const price = document.createElement("b"); price.textContent = money(p.price);
+    row.append(left, price); list.append(row);
+  });
+}
+document.getElementById("codeInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") addManualCode();
+});
+renderCart();
+renderSamples();
+</script>
+</body>
+</html>
